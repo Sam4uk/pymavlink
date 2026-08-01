@@ -123,6 +123,14 @@ ${{entry:   ${name}=${value}, /* ${description} |${{param:${description}| }} */
 #endif
 }}
 
+${{enum:
+
+/** @brief ${description} */
+ #if !defined(HAVE_ENUM_${name}_MAP)
+ # define HAVE_ENUM_${name}_MAP {${{entry:{${name},"${name}"},}} }
+ #endif // HAVE_ENUM_${name}_MAP
+}}
+
 // MAVLINK VERSION
 
 #ifndef MAVLINK_VERSION
@@ -146,6 +154,9 @@ ${{include_list:#include "../${base}/${base}.h"
 #if MAVLINK_${basename_upper}_XML_HASH == MAVLINK_PRIMARY_XML_HASH
 # define MAVLINK_MESSAGE_INFO {${message_info_array}}
 # define MAVLINK_MESSAGE_NAMES {${message_name_array}}
+# if !defined(MAVLINK_MESSAGE_NAMES_MAP)
+#  define MAVLINK_MESSAGE_NAMES_MAP {${message_name_map}}
+# endif
 # if MAVLINK_COMMAND_24BIT
 #  include "../mavlink_get_info.h"
 # endif
@@ -675,10 +686,13 @@ def generate_one(basename, xml):
 
     # form message name array
     xml.message_name_array = ''
+    xml.message_name_map = ''
     # sort by names
     for msgid, name in sorted(xml.message_names.items(), key=lambda k_v: (k_v[1], k_v[0])):
         xml.message_name_array += '{ "%s", %u }, ' % (name, msgid)
+        xml.message_name_map += '{ %s, "%s" }, ' % (msgid, name)
     xml.message_name_array = xml.message_name_array[:-2]
+    xml.message_name_map = xml.message_name_map[:-2]
 
     # add some extra field attributes for convenience with arrays
     for m in xml.message:

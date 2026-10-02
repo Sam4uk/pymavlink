@@ -61,7 +61,6 @@
         <xs:pattern value="uint32_t(\[([0-9])+\])?"/>
         <xs:pattern value="int64_t(\[([0-9])+\])?"/>
         <xs:pattern value="uint64_t(\[([0-9])+\])?"/>
-        <xs:pattern value="array\[[0-9]+\]"/> <!-- 0.9 compatibility -->
     </xs:restriction>
   </xs:simpleType>
 </xs:attribute>
@@ -97,6 +96,7 @@
     <xs:enumeration value="km"/>       <!-- kilometres -->
     <xs:enumeration value="dam"/>      <!-- decametres -->
     <xs:enumeration value="m"/>        <!-- metres -->
+    <xs:enumeration value="m^2"/>      <!-- metres squared (typically used in variance) -->
     <xs:enumeration value="m/s"/>      <!-- metres per second -->
     <xs:enumeration value="m/s/s"/>    <!-- metres per second per second -->
     <xs:enumeration value="m/s*5"/>    <!-- metres per second * 5 required from dagar for HIGH_LATENCY2 message -->
@@ -182,6 +182,7 @@
 <xs:simpleType name="factor">
   <xs:restriction base="xs:string">
     <xs:enumeration value="1E-2"/>        <!-- actual value = stated value / 100 -->
+    <xs:enumeration value="2E-3"/>        <!-- actual value = stated value / 500 -->
     <xs:enumeration value="360/255"/>     <!-- actual value = stated value * 360/255, as used for GPS_STATUS.satellite_azimuth -->
   </xs:restriction>
 </xs:simpleType>
@@ -196,9 +197,14 @@
 <xs:attribute name="reserved" type="xs:boolean" default="false"/>      <!-- parameter is reserved -->
 
 <!-- definition entry elements attributes (like the ones used on MAV_CMD for example) -->
-<xs:attribute name="hasLocation" type="xs:boolean" default="true"/>    <!-- entry has lat/lon/alt location -->
-<xs:attribute name="isDestination" type="xs:boolean" default="true"/>  <!-- entry is a destination -->
-<xs:attribute name="missionOnly" type="xs:boolean" default="true"/>  <!-- entry only makes sense in missions, not commands -->
+<xs:attribute name="hasLocation" type="xs:boolean" default="false"/>      <!-- lat/lon/alt location in params 5, 6, 7 (entry contains location information). -->
+<xs:attribute name="isDestination" type="xs:boolean" default="false"/>    <!-- entry is a waypoint/destination (lat/lon/alt in params 5, 6, 7) -->
+<xs:attribute name="hasAltitudeOnly" type="xs:boolean" default="false"/>  <!-- alt in param7 and lat/lon not in param 5/6 -->
+<xs:attribute name="missionOnly" type="xs:boolean" default="false"/>  <!-- planned for removal -->
+<xs:attribute name="mission" type="xs:boolean" default="false"/>          <!-- entry can be used in mission plan -->
+<xs:attribute name="fence" type="xs:boolean" default="false"/>            <!-- entry can be used in fence plan -->
+<xs:attribute name="rally" type="xs:boolean" default="false"/>            <!-- entry can be used in rally plan -->
+<xs:attribute name="command" type="xs:boolean" default="false"/>          <!-- entry can be used in command protocol -->
 
 <!-- definition of complex elements -->
 <xs:element name="param">
@@ -287,8 +293,13 @@
         <xs:attribute ref="value" />
         <xs:attribute ref="name" use="required"/>
         <xs:attribute ref="hasLocation"/>
-        <xs:attribute ref="isDestination"/>
-        <xs:attribute ref="missionOnly"/>
+        <xs:attribute ref="hasAltitudeOnly"/>
+        <xs:attribute ref="isDestination"/> <!-- requires hasLocation -->
+        <xs:attribute ref="missionOnly"/>  <!-- planned for removal -->
+        <xs:attribute ref="mission"/>
+        <xs:attribute ref="fence"/>
+        <xs:attribute ref="rally"/>
+        <xs:attribute ref="command"/>
     </xs:complexType>
 </xs:element>
 

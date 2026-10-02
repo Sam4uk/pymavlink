@@ -100,6 +100,10 @@ package body MAVLink.V2 is
       Header : V2_Header with Import,
         Address => Incoming.Income_Buffer'Address;
    begin
+      if Incoming.Discard_Remaining > 0 then
+         Incoming.Discard_Remaining := Incoming.Discard_Remaining - 1;
+         return False;
+      end if;
       if Incoming.Last > 0
         and then Incoming.Position >= Incoming.Last
       then
@@ -115,6 +119,27 @@ package body MAVLink.V2 is
       Incoming.Position := Incoming.Position + 1;
       Incoming.Income_Buffer (Incoming.Position) := Value;
 
+      if Incoming.Position = 3 and then (Value and 16#FE#) /= 0 then
+         --  Skip the entire unsupported frame, including any signature. Payload
+         --  bytes may contain valid-looking frames and must not be parsed again.
+         declare
+            Remaining : Natural := Natural (Header.Len) + 9;
+         begin
+            if (Value and 1) /= 0 then
+               Remaining := Remaining + 13;
+            end if;
+            if (Value and 2) /= 0 then
+               Remaining := Remaining + 3;
+            end if;
+            if (Value and 4) /= 0 then
+               Remaining := Remaining + 4;
+            end if;
+            Clear (Incoming);
+            Incoming.Discard_Remaining := Remaining;
+            return False;
+         end;
+      end if;
+
       if Incoming.Position < Packet_Payload_First then
          --  no header yet
          return False;
@@ -123,8 +148,8 @@ package body MAVLink.V2 is
       if Incoming.Last = 0 then
          Incoming.Last := Incoming.Income_Buffer'First +
            Packet_Payload_First + --  header
-             Natural (Header.Len - 1) + --  data len
-           2; --  x25crc checksum
+             Natural (Header.Len) + --  data len
+           1; --  x25crc checksum
 
          if (Header.Inc_Flags and 1) > 0 then
             Incoming.Last := Incoming.Last + 13; --  SHA256 signature
@@ -411,7 +436,7 @@ package body MAVLink.V2 is
         Address => Incoming.Income_Buffer
           (Incoming.Income_Buffer'First +
              Packet_Payload_First +
-               Natural (Header.Len - 1) + 3)'Address;
+               Natural (Header.Len) + 2)'Address;
    begin
       if (Header.Inc_Flags and 1) > 0 then
          return Sig.Link_Id;
@@ -458,7 +483,7 @@ package body MAVLink.V2 is
          declare
             Last_Data   : constant Positive := Incoming.Income_Buffer'First +
               Packet_Payload_First +
-                Natural (Header.Len - 1);
+                Natural (Header.Len) - 1;
             Sig         : constant MAVLink.V2.MAV_Signature with Import,
               Address => Incoming.Income_Buffer (Last_Data + 3)'Address;
             Message_SHA : SHA_Digest;
@@ -620,6 +645,7 @@ package body MAVLink.V2 is
    begin
       Incoming.Position := 0;
       Incoming.Last     := 0;
+      Incoming.Discard_Remaining := 0;
    end Clear;
 
    -----------
@@ -649,16 +675,18 @@ package body MAVLink.V2 is
       Buffer   : out Data_Buffer;
       Last     : out Natural)
    is
-      Header    : constant V2_Header with Import,
+      Header     : constant V2_Header with Import,
         Address => Incoming.Income_Buffer'Address;
-      Last_Data : constant Positive := Incoming.Income_Buffer'First +
-        Packet_Payload_First +
-          Natural (Header.Len) - 1;
+      First_Data : constant Natural :=
+        Incoming.Income_Buffer'First +
+          Packet_Payload_First;
+      Len        : Natural;
    begin
-      Last := Buffer'First + Natural (Header.Len - 1);
+      Len  := Natural'Min (Natural (Header.Len), Buffer'Length);
+      Last := Buffer'First + Len - 1;
+
       Buffer (Buffer'First .. Last) := Incoming.Income_Buffer
-        (Incoming.Income_Buffer'First + Packet_Payload_First ..
-           Last_Data);
+        (First_Data .. First_Data + Len - 1);
    end Get_Message_Data;
 
    ----------------------
@@ -684,6 +712,36 @@ package body MAVLink.V2 is
    begin
       Get_Message_Data (Self.Incoming, Buffer, Last);
    end Get_Message_Data;
+
+   --------------------
+   -- Get_Msg_Length --
+   --------------------
+
+   function Get_Msg_Length (Incoming : Incoming_Data) return Interfaces.Unsigned_8
+   is
+      Header : constant V2_Header with Import,
+        Address => Incoming.Income_Buffer'Address;
+   begin
+      return Header.Len;
+   end Get_Msg_Length;
+
+   --------------------
+   -- Get_Msg_Length --
+   --------------------
+
+   function Get_Msg_Length (Self : Connection) return Interfaces.Unsigned_8 is
+   begin
+      return Get_Msg_Length (Self.Incoming);
+   end Get_Msg_Length;
+
+   --------------------
+   -- Get_Msg_Length --
+   --------------------
+
+   function Get_Msg_Length (Self : In_Connection) return Interfaces.Unsigned_8 is
+   begin
+      return Get_Msg_Length (Self.Incoming);
+   end Get_Msg_Length;
 
    ------------
    -- Encode --

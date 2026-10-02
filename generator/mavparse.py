@@ -13,7 +13,6 @@ import sys
 import time
 import xml.parsers.expat
 
-PROTOCOL_0_9 = "0.9"
 PROTOCOL_1_0 = "1.0"
 PROTOCOL_2_0 = "2.0"
 
@@ -197,7 +196,7 @@ class MAVEnum(object):
 
 class MAVXML(object):
     '''parse a mavlink XML file'''
-    def __init__(self, filename, wire_protocol_version=PROTOCOL_0_9):
+    def __init__(self, filename, wire_protocol_version=PROTOCOL_1_0):
         self.filename = filename
         self.basename = os.path.basename(filename)
         if self.basename.lower().endswith(".xml"):
@@ -212,34 +211,28 @@ class MAVXML(object):
         self.include = []
         self.wire_protocol_version = wire_protocol_version
 
+        # every protocol we still support is little-endian, sorts its base
+        # fields by descending type length and uses CRC_EXTRA.  These are kept
+        # as attributes for the benefit of out-of-tree generators; only 0.9
+        # ever set them False.
+        self.little_endian = True
+        self.sort_fields = True
+        self.crc_extra = True
+
         # setup the protocol features for the requested protocol version
-        if wire_protocol_version == PROTOCOL_0_9:
-            self.protocol_marker = ord('U')
-            self.sort_fields = False
-            self.little_endian = False
-            self.crc_extra = False
-            self.crc_struct = False
-            self.command_24bit = False
-            self.allow_extensions = False
-        elif wire_protocol_version == PROTOCOL_1_0:
+        if wire_protocol_version == PROTOCOL_1_0:
             self.protocol_marker = 0xFE
-            self.sort_fields = True
-            self.little_endian = True
-            self.crc_extra = True
             self.crc_struct = False
             self.command_24bit = False
             self.allow_extensions = False
         elif wire_protocol_version == PROTOCOL_2_0:
             self.protocol_marker = 0xFD
-            self.sort_fields = True
-            self.little_endian = True
-            self.crc_extra = True
             self.crc_struct = True
             self.command_24bit = True
             self.allow_extensions = True
         else:
             print("Unknown wire protocol version")
-            print("Available versions are: %s %s %s" % (PROTOCOL_0_9, PROTOCOL_1_0, PROTOCOL_2_0))
+            print("Available versions are: %s %s" % (PROTOCOL_1_0, PROTOCOL_2_0))
             raise MAVParseError('Unknown MAVLink wire protocol version %s' % wire_protocol_version)
 
         in_element_list = []
@@ -331,6 +324,8 @@ class MAVXML(object):
             elif in_element == "mavlink.enums.enum.entry.deprecated":
                 check_attrs(attrs, ['since', 'replaced_by'], 'deprecated')
                 self.enum[-1].entry[-1].deprecated = MAVDeprecated(attrs['since'], attrs['replaced_by'])
+            elif in_element == "mavlink.include":
+                self.include.append('')
 
         def is_target_system_field(m, f):
             if f.name == 'target_system':
@@ -364,7 +359,7 @@ class MAVXML(object):
             elif in_element == "mavlink.version":
                 self.version = int(data)
             elif in_element == "mavlink.include":
-                self.include.append(data)
+                self.include[-1] += data
 
         f = open(filename, mode='rb')
         p = xml.parsers.expat.ParserCreate()
@@ -424,17 +419,16 @@ class MAVXML(object):
             m.message_flags = 0
             m.target_system_ofs = 0
             m.target_component_ofs = 0
+            m.target_system_fieldname = None
+            m.target_component_fieldname = None
             m.field_offsets = {}
             
-            if self.sort_fields:
-                # when we have extensions we only sort up to the first extended field
-                sort_end = m.base_fields()
-                m.ordered_fields = sorted(m.fields[:sort_end],
-                                                   key=operator.attrgetter('type_length'),
-                                                   reverse=True)
-                m.ordered_fields.extend(m.fields[sort_end:])
-            else:
-                m.ordered_fields = m.fields
+            # when we have extensions we only sort up to the first extended field
+            sort_end = m.base_fields()
+            m.ordered_fields = sorted(m.fields[:sort_end],
+                                      key=operator.attrgetter('type_length'),
+                                      reverse=True)
+            m.ordered_fields.extend(m.fields[sort_end:])
             for f in m.fields:
                 m.fieldnames.append(f.name)
                 L = f.array_length
@@ -464,12 +458,18 @@ class MAVXML(object):
                 if f.name.find('[') != -1:
                     raise MAVParseError("invalid field name with array descriptor %s" % f.name)
                 # having flags for target_system and target_component helps a lot for routing code
+                f.is_target_system = False
+                f.is_target_component = False
                 if is_target_system_field(m, f):
                     m.message_flags |= FLAG_HAVE_TARGET_SYSTEM
                     m.target_system_ofs = f.wire_offset
+                    m.target_system_fieldname = f.name
+                    f.is_target_system = True
                 elif f.name == 'target_component':
                     m.message_flags |= FLAG_HAVE_TARGET_COMPONENT
                     m.target_component_ofs = f.wire_offset
+                    m.target_component_fieldname = f.name
+                    f.is_target_component = True
             m.num_fields = len(m.fieldnames)
             if m.num_fields > 64:
                 raise MAVParseError("num_fields=%u : Maximum number of field names allowed is %u" % (

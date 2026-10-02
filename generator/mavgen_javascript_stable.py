@@ -73,6 +73,7 @@ ${MAVHEAD}.MAVLINK_TYPE_FLOAT    = 9
 ${MAVHEAD}.MAVLINK_TYPE_DOUBLE   = 10
 
 ${MAVHEAD}.MAVLINK_IFLAG_SIGNED = 0x01
+${MAVHEAD}.MAVLINK_IFLAG_MASK = 0x00 // signatures and extended headers are unsupported
 
 // Mavlink headers incorporate sequence, source system (platform) and source component. 
 ${MAVHEAD}.header = function(msgId, mlen, seq, srcSystem, srcComponent, incompat_flags=0, compat_flags=0,) {
@@ -88,7 +89,6 @@ ${MAVHEAD}.header = function(msgId, mlen, seq, srcSystem, srcComponent, incompat
 }
 """, {'FILELIST' : ",".join(args),
       'PROTOCOL_MARKER' : xml.protocol_marker,
-      'crc_extra' : xml.crc_extra,
       'WIRE_PROTOCOL_VERSION' : ("2.0" if xml.protocol_marker == 253 else "1.0"),
       'MAVHEAD': get_mavhead(xml),
       'HEADERLEN': ("10" if xml.protocol_marker == 253 else "6")})
@@ -400,10 +400,24 @@ ${MAVPROCESSOR}.prototype.parsePrefix = function() {
 
 // Determine the length.  Leaves buffer untouched.
 ${MAVPROCESSOR}.prototype.parseLength = function() {
-    
+
     if( this.buf.length >= 2 ) {
         var unpacked = jspack.Unpack('BB', this.buf.slice(0, 2));
         this.expected_length = unpacked[1] + ${MAVHEAD}.HEADER_LEN + 2 // length of message + header + CRC
+    }
+    if( this.buf.length >= 3 && this.buf[0] == 253 ) {
+        // MAVLink2.1 extended headers: account for their length so the
+        // stream stays in sync, the frame is rejected in decode()
+        var incompat_flags = this.buf[2];
+        if (incompat_flags & 0x01) {
+            this.expected_length += 13;
+        }
+        if (incompat_flags & 0x02) { // MAVLINK_IFLAG_SYSID32
+            this.expected_length += 3;
+        }
+        if (incompat_flags & 0x04) { // MAVLINK_IFLAG_TARGET32
+            this.expected_length += 4;
+        }
     }
 
 }
@@ -540,6 +554,11 @@ unpacked = jspack.Unpack('cBBBBB', msgbuf.slice(0, 6));
 
     if (magic.charCodeAt(0) != this.protocol_marker) {
         throw new Error("Invalid MAVLink prefix ("+magic.charCodeAt(0)+")");
+    }
+
+    if (incompat_flags & ~${MAVHEAD}.MAVLINK_IFLAG_MASK) {
+        // e.g. MAVLink2.1 32 bit sysid extended headers
+        throw new Error("Unsupported incompat_flags ("+incompat_flags+")");
     }
 
     if( mlen != msgbuf.length - (${MAVHEAD}.HEADER_LEN + 2)) {
@@ -693,10 +712,7 @@ def generate(basename, xml):
         filelist.append(os.path.basename(x.filename))
 
     for m in msgs:
-        if xml[0].little_endian:
-            m.fmtstr = '<'
-        else:
-            m.fmtstr = '>'
+        m.fmtstr = '<'
         for f in m.ordered_fields:
             m.fmtstr += mavfmt(f)
         m.order_map = [ 0 ] * len(m.fieldnames)
